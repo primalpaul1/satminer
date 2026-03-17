@@ -47,3 +47,10 @@ export const ACTION_TYPES = {
  * Even if individual publishes drop, the next broadcast re-syncs everyone.
  */
 export const STATE_BROADCAST_INTERVAL = 500;
+
+/** Game balance constants */
+export const HARDROCK_PROBABILITY = 0.3;
+export const HARDROCK_HEALTH = 3;
+export const BITCOIN_DEPTH_RATIO = 0.6;
+export const BITCOIN_EDGE_BUFFER = 2;
+export const SWING_ANIMATION_FRAMES = 8;

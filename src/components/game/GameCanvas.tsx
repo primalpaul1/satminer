@@ -357,9 +357,10 @@ export function GameCanvas({ gameState, currentPubkey, className }: GameCanvasPr
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
 
-  // Preload character images once on mount
+  // Preload character images once on mount; clear stale particles
   useEffect(() => {
     preloadCharacterImages();
+    particles = [];
   }, []);
 
   const draw = useCallback((time: number) => {

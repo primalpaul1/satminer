@@ -12,6 +12,10 @@
  * so all players have the same hidden bitcoin position.
  */
 
+import { HARDROCK_PROBABILITY, HARDROCK_HEALTH, BITCOIN_DEPTH_RATIO, BITCOIN_EDGE_BUFFER, CHARACTERS } from './gameConstants';
+
+const VALID_CHARACTER_IDS = new Set(CHARACTERS.map(c => c.id));
+
 export const GRID_WIDTH = 20;
 export const GRID_HEIGHT = 14;
 export const CELL_SIZE = 40; // pixels
@@ -82,6 +86,42 @@ export function getPlayerColor(index: number): string {
   return PLAYER_COLORS[index % PLAYER_COLORS.length];
 }
 
+/** Check that a cell at (targetX, targetY) is reachable from the surface via mineable cells. */
+function isReachable(grid: Cell[][], targetX: number, targetY: number): boolean {
+  const visited = new Set<string>();
+  const queue: [number, number][] = [];
+
+  // Start from all surface cells (row 0 and 1)
+  for (let x = 0; x < GRID_WIDTH; x++) {
+    if (grid[1][x].type === 'surface') {
+      queue.push([x, 1]);
+      visited.add(`${x},1`);
+    }
+  }
+
+  while (queue.length > 0) {
+    const [cx, cy] = queue.shift()!;
+    if (cx === targetX && cy === targetY) return true;
+
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || nx >= GRID_WIDTH || ny < 0 || ny >= GRID_HEIGHT) continue;
+      const key = `${nx},${ny}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+
+      const cell = grid[ny][nx];
+      // Can traverse empty, surface, rock, hard_rock, and bitcoin — NOT bedrock
+      if (cell.type !== 'bedrock') {
+        queue.push([nx, ny]);
+      }
+    }
+  }
+
+  return false;
+}
+
 export function createGrid(seed: string): { grid: Cell[][]; bitcoinX: number; bitcoinY: number } {
   const rng = mulberry32(hashString(seed));
   const grid: Cell[][] = [];
@@ -101,8 +141,8 @@ export function createGrid(seed: string): { grid: Cell[][]; bitcoinX: number; bi
       // Underground: mix of rock and hard rock
       else {
         const val = rng();
-        if (val < 0.3) {
-          row.push({ type: 'hard_rock', health: 3, revealed: false });
+        if (val < HARDROCK_PROBABILITY) {
+          row.push({ type: 'hard_rock', health: HARDROCK_HEALTH, revealed: false });
         } else {
           row.push({ type: 'rock', health: 1, revealed: false });
         }
@@ -111,17 +151,33 @@ export function createGrid(seed: string): { grid: Cell[][]; bitcoinX: number; bi
     grid.push(row);
   }
 
-  // Place bitcoin in the bottom third of the grid, away from edges
-  const minY = Math.floor(GRID_HEIGHT * 0.6);
+  // Place bitcoin in the bottom portion of the grid, away from edges
+  const minY = Math.floor(GRID_HEIGHT * BITCOIN_DEPTH_RATIO);
   const maxY = GRID_HEIGHT - 2;
-  const minX = 2;
-  const maxX = GRID_WIDTH - 3;
+  const minX = BITCOIN_EDGE_BUFFER;
+  const maxX = GRID_WIDTH - BITCOIN_EDGE_BUFFER - 1;
 
-  const bitcoinX = minX + Math.floor(rng() * (maxX - minX + 1));
-  const bitcoinY = minY + Math.floor(rng() * (maxY - minY + 1));
+  let bitcoinX = minX + Math.floor(rng() * (maxX - minX + 1));
+  let bitcoinY = minY + Math.floor(rng() * (maxY - minY + 1));
 
   // Set the bitcoin cell
   grid[bitcoinY][bitcoinX] = { type: 'bitcoin', health: 1, revealed: false };
+
+  // Verify bitcoin is reachable; if not, find the nearest reachable cell in the valid range
+  if (!isReachable(grid, bitcoinX, bitcoinY)) {
+    grid[bitcoinY][bitcoinX] = { type: 'rock', health: 1, revealed: false };
+    let placed = false;
+    for (let y = minY; y <= maxY && !placed; y++) {
+      for (let x = minX; x <= maxX && !placed; x++) {
+        if (grid[y][x].type !== 'bedrock' && isReachable(grid, x, y)) {
+          bitcoinX = x;
+          bitcoinY = y;
+          grid[y][x] = { type: 'bitcoin', health: 1, revealed: false };
+          placed = true;
+        }
+      }
+    }
+  }
 
   return { grid, bitcoinX, bitcoinY };
 }
@@ -236,8 +292,10 @@ export function swingAxe(state: GameState, pubkey: string): SwingResult {
     return { state: { ...state, players: newPlayers }, hitCell: { x: targetX, y: targetY }, destroyed: false, foundBitcoin: false };
   }
 
-  // Mine the cell
-  const newGrid = state.grid.map(row => row.map(c => ({ ...c })));
+  // Mine the cell — only copy the affected row
+  const newGrid = state.grid.map((row, y) =>
+    y === targetY ? row.map(c => ({ ...c })) : row,
+  );
   newGrid[targetY][targetX].health -= 1;
 
   let destroyed = false;
@@ -319,6 +377,10 @@ export function applyStatePatch(
 
   // --- Update player position ---
   let player = state.players.get(pubkey);
+  const validCharId = patch.characterId && VALID_CHARACTER_IDS.has(patch.characterId)
+    ? patch.characterId
+    : undefined;
+
   if (!player) {
     // Player not yet in local state — initialise them
     player = {
@@ -329,7 +391,7 @@ export function applyStatePatch(
       swingFrame: 0,
       pubkey,
       color: getPlayerColor(playerIndex),
-      characterId: patch.characterId || 'saylor',
+      characterId: validCharId || 'saylor',
     };
   } else {
     player = {
@@ -338,7 +400,7 @@ export function applyStatePatch(
       y: patch.y,
       direction: patch.direction,
       isSwinging: patch.isSwinging,
-      characterId: patch.characterId || player.characterId,
+      characterId: validCharId || player.characterId,
     };
   }
 
@@ -358,10 +420,7 @@ export function applyStatePatch(
     const local = newGrid[y][x];
 
     // Accept if: incoming is more destroyed (lower health) OR incoming is empty
-    const shouldApply =
-      type === 'empty' ||
-      health < local.health ||
-      (local.type !== 'empty' && local.type !== 'bedrock' && local.type !== 'surface' && type === 'empty');
+    const shouldApply = type === 'empty' || health < local.health;
 
     if (shouldApply && (local.health !== health || local.type !== type)) {
       if (!gridChanged) {

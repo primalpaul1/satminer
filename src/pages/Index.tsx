@@ -40,9 +40,7 @@ const Index = () => {
     setJoiningId(lobby.gameId);
     // Navigate to game page — payment gate will show first.
     // The player is registered by paying (zap receipt = proof of entry).
-    // No need to publish a separate "join" event.
     navigate(`/game/${lobby.hostPubkey}/${lobby.gameId}`);
-    setJoiningId(null);
   };
 
   const handleStart = async (lobby: GameLobbyData) => {

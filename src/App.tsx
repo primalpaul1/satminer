@@ -54,7 +54,11 @@ export function App() {
               <NWCProvider>
                 <TooltipProvider>
                   <Toaster />
-                  <Suspense>
+                  <Suspense fallback={
+                    <div className="min-h-screen bg-stone-950 flex items-center justify-center">
+                      <div className="text-stone-400 font-mono animate-pulse">Loading...</div>
+                    </div>
+                  }>
                     <AppRouter />
                   </Suspense>
                 </TooltipProvider>

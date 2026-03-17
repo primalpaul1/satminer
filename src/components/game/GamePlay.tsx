@@ -22,7 +22,7 @@ import { useHousePayout } from '@/hooks/useHousePayout';
 import { useGamePlayers } from '@/hooks/useGamePlayers';
 import type { GameLobbyData } from '@/hooks/useGameLobby';
 import { useNostr } from '@nostrify/react';
-import { GAME_KINDS, STATE_BROADCAST_INTERVAL } from '@/lib/gameConstants';
+import { GAME_KINDS, STATE_BROADCAST_INTERVAL, SWING_ANIMATION_FRAMES } from '@/lib/gameConstants';
 import { Trophy, Zap, ArrowLeft, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
@@ -194,13 +194,10 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
           if (processedIdsRef.current.has(event.id)) return;
           processedIdsRef.current.add(event.id);
 
-          // Prune the dedup set
+          // Prune the dedup set — keep the newest entries
           if (processedIdsRef.current.size > MAX_PROCESSED_IDS) {
-            const iter = processedIdsRef.current.values();
-            for (let i = 0; i < 100; i++) {
-              const val = iter.next().value;
-              if (val !== undefined) processedIdsRef.current.delete(val);
-            }
+            const all = Array.from(processedIdsRef.current);
+            processedIdsRef.current = new Set(all.slice(all.length - 400));
           }
 
           try {
@@ -229,12 +226,12 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
 
               return next;
             });
-          } catch {
-            // Malformed event, skip
+          } catch (err) {
+            console.warn('Malformed game event, skipping:', event.id, err);
           }
         });
-      } catch {
-        // Query failed — try again next tick
+      } catch (err) {
+        console.warn('State poll query failed, retrying next tick:', err);
       } finally {
         isPollingRef.current = false;
       }
@@ -244,7 +241,6 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
     poll(); // immediate first poll
 
     return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nostr, lobby.gameId, user, lobby.players, gameState.winner]);
 
   // --- Swing animation ticker ---
@@ -256,7 +252,7 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
         prev.players.forEach((player, key) => {
           if (player.isSwinging) {
             changed = true;
-            if (player.swingFrame >= 8) {
+            if (player.swingFrame >= SWING_ANIMATION_FRAMES) {
               newPlayers.set(key, { ...player, isSwinging: false, swingFrame: 0 });
             } else {
               newPlayers.set(key, { ...player, swingFrame: player.swingFrame + 1 });
@@ -277,11 +273,22 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
     if (gameState.winner && gameState.winner === user?.pubkey && !winClaimedRef.current) {
       winClaimedRef.current = true;
       payoutFiredRef.current = true;
-      claimWin(lobby.gameId, lobby.hostPubkey).catch(console.error);
-      updateStatus(lobby, 'finished').catch(console.error);
-      payWinner(user.pubkey, lobby).catch(console.error);
+
+      (async () => {
+        try {
+          await claimWin(lobby.gameId, lobby.hostPubkey);
+        } catch (err) { console.error('claimWin failed:', err); }
+        try {
+          await updateStatus(lobby, 'finished');
+        } catch (err) { console.error('updateStatus failed:', err); }
+        try {
+          await payWinner(user.pubkey, lobby);
+        } catch (err) { console.error('payWinner failed:', err); }
+      })();
     }
-  }, [gameState.winner, user?.pubkey, lobby, claimWin, updateStatus, payWinner]);
+  // Stable deps only — avoid re-running when payWinner/claimWin refs change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.winner, user?.pubkey, lobby.gameId]);
 
   // Host fallback: watch for a RESULT event if the winner's browser drops
   const isHost = user?.pubkey === lobby.hostPubkey;
@@ -289,26 +296,31 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
     if (!isHost || gameState.winner) return;
 
     const interval = setInterval(async () => {
+      if (payoutFiredRef.current) return;
       try {
         const results = await nostr.query(
           [{ kinds: [GAME_KINDS.RESULT], '#d': [lobby.gameId], limit: 5 }],
           { signal: AbortSignal.timeout(4000) },
         );
-        for (const event of results) {
-          if (!payoutFiredRef.current) {
-            payoutFiredRef.current = true;
-            setGameState(prev => ({ ...prev, winner: event.pubkey }));
-            updateStatus(lobby, 'finished').catch(console.error);
-            payWinner(event.pubkey, lobby).catch(console.error);
-          }
+        if (results.length > 0 && !payoutFiredRef.current) {
+          payoutFiredRef.current = true;
+          const winnerPubkey = results[0].pubkey;
+          setGameState(prev => ({ ...prev, winner: winnerPubkey }));
+          try {
+            await updateStatus(lobby, 'finished');
+          } catch (err) { console.error('host updateStatus failed:', err); }
+          try {
+            await payWinner(winnerPubkey, lobby);
+          } catch (err) { console.error('host payWinner fallback failed:', err); }
         }
       } catch {
-        // ignore
+        // query failed, retry next tick
       }
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [isHost, gameState.winner, nostr, lobby, updateStatus, payWinner]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, gameState.winner, nostr, lobby.gameId]);
 
   // --- Local input handlers ---
 

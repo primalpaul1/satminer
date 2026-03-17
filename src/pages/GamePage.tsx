@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useSeoMeta } from '@unhead/react';
 import { useGameLobby } from '@/hooks/useGameLobby';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { useGamePlayers } from '@/hooks/useGamePlayers';
 import { WaitingRoom } from '@/components/game/WaitingRoom';
 import { GamePlay } from '@/components/game/GamePlay';
 import { PaymentGate } from '@/components/game/PaymentGate';
@@ -110,6 +111,11 @@ function GamePageInner({
   onBack: () => void;
 }) {
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
+
+  // Use zap receipts as the authoritative payment check (not just local state)
+  const { paidPlayers } = useGamePlayers(lobby ?? undefined);
+  const verifiedPaid = hasPaid || (user ? paidPlayers.has(user.pubkey) : false);
 
   if (isLoading) {
     return (
@@ -145,7 +151,7 @@ function GamePageInner({
     );
   }
 
-  if (!hasPaid) {
+  if (!verifiedPaid) {
     return (
       <div className="min-h-screen bg-stone-950 px-4 py-8">
         <PaymentGate

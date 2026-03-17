@@ -15,6 +15,10 @@ import type { GameLobbyData } from './useGameLobby';
  * 3. Pay the invoice from the house wallet via NWC
  * 4. Publish a verifiable payout record on Nostr
  */
+// Track which game IDs have already been paid out or refunded to prevent duplicates
+const payoutFiredForGame = new Set<string>();
+const refundFiredForGame = new Set<string>();
+
 export function useHousePayout() {
   const { nostr } = useNostr();
   const { config } = useAppContext();
@@ -29,6 +33,13 @@ export function useHousePayout() {
     winnerPubkey: string,
     lobby: GameLobbyData,
   ) => {
+    // Idempotency guard — prevent double payouts for the same game
+    if (payoutFiredForGame.has(lobby.gameId)) {
+      console.log(`[House] Payout already fired for game ${lobby.gameId}, skipping`);
+      return null;
+    }
+    payoutFiredForGame.add(lobby.gameId);
+
     setIsPaying(true);
 
     try {
@@ -66,6 +77,7 @@ export function useHousePayout() {
       // Create zap request from the house account to the winner
       const zapRequest = nip57.makeZapRequest({
         profile: winnerPubkey,
+        event: null,
         amount: zapAmount,
         relays: config.relayMetadata.relays.map(r => r.url),
         comment: `SatMiner payout! You won ${totalPot} sats from game ${lobby.gameId}`,
@@ -140,6 +152,13 @@ export function useHousePayout() {
     lobby: GameLobbyData,
     paidPubkeys: string[],
   ) => {
+    // Idempotency guard — prevent double refunds for the same game
+    if (refundFiredForGame.has(lobby.gameId)) {
+      console.log(`[House] Refund already fired for game ${lobby.gameId}, skipping`);
+      return [];
+    }
+    refundFiredForGame.add(lobby.gameId);
+
     setIsPaying(true);
 
     const results: { pubkey: string; success: boolean; error?: string }[] = [];
@@ -180,6 +199,7 @@ export function useHousePayout() {
 
         const zapRequest = nip57.makeZapRequest({
           profile: pubkey,
+          event: null,
           amount: refundAmount,
           relays: config.relayMetadata.relays.map(r => r.url),
           comment: `SatMiner refund: ${lobby.betAmount} sats from expired game ${lobby.gameId}`,

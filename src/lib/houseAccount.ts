@@ -14,13 +14,19 @@ import { nip19, getPublicKey } from 'nostr-tools';
 import { NSecSigner } from '@nostrify/nostrify';
 import { webln as weblnSdk } from '@getalby/sdk';
 
-const HOUSE_NSEC = 'nsec12uf5hr3c0mrzcjtxpy56hmt2rzkpsalx3sjnhmh70rjvagltdamq5wzwy6';
+const HOUSE_NSEC = import.meta.env.VITE_HOUSE_NSEC;
+if (!HOUSE_NSEC) {
+  throw new Error('VITE_HOUSE_NSEC environment variable is not set. Copy .env.example to .env and fill in your house account nsec.');
+}
 
-const HOUSE_NWC = 'nostr+walletconnect://abeae6cfe41e808f4bcf09709a66f781d9ed72973e7c726192f5cb02086a67cd?relay=wss://relay.primal.net&secret=bb3220762bc1b9f6e1834e55577ddd2008342efd7279fbf857bb71048b71214d&lud16=quietwalrus11@primal.net';
+const HOUSE_NWC = import.meta.env.VITE_HOUSE_NWC;
+if (!HOUSE_NWC) {
+  throw new Error('VITE_HOUSE_NWC environment variable is not set. Copy .env.example to .env and fill in your NWC connection string.');
+}
 
 /** Decode the house secret key and derive the public key */
 function getHouseKeys() {
-  const decoded = nip19.decode(HOUSE_NSEC);
+  const decoded = nip19.decode(HOUSE_NSEC as `nsec1${string}`);
   if (decoded.type !== 'nsec') {
     throw new Error('Invalid house nsec');
   }
@@ -48,7 +54,7 @@ export function getHouseSigner(): NSecSigner {
  *  always NWC-only and never needs window.webln.
  */
 export async function payInvoiceFromHouse(invoice: string): Promise<{ preimage: string }> {
-  const provider = new weblnSdk.NWCWebLNProvider({ nostrWalletConnectUrl: HOUSE_NWC });
+  const provider = new weblnSdk.NostrWebLNProvider({ nostrWalletConnectUrl: HOUSE_NWC });
 
   try {
     await provider.enable();

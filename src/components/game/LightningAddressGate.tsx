@@ -25,8 +25,20 @@ export function LightningAddressGate({ children }: LightningAddressGateProps) {
   const { toast } = useToast();
   const [address, setAddress] = useState('');
 
-  // Still loading the profile — don't block yet
-  if (!user || author.isLoading) return <>{children}</>;
+  // Not logged in — let the parent handle auth
+  if (!user) return <>{children}</>;
+
+  // Still loading the profile — show a loading state instead of passing through
+  if (author.isLoading) {
+    return (
+      <div className="min-h-screen bg-stone-950 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-stone-400">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="font-mono">Checking profile...</span>
+        </div>
+      </div>
+    );
+  }
 
   const metadata = author.data?.metadata;
   const hasLightning = !!(metadata?.lud16 || metadata?.lud06);
@@ -35,10 +47,12 @@ export function LightningAddressGate({ children }: LightningAddressGateProps) {
   if (hasLightning) return <>{children}</>;
 
   const handleSave = async () => {
-    if (!address.includes('@') || !address.includes('.')) {
+    // Validate Lightning address format: user@domain.tld
+    const lnAddressRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+    if (!lnAddressRegex.test(address.trim())) {
       toast({
         title: 'Invalid address',
-        description: 'Enter a valid Lightning address (e.g. you@wallet.com)',
+        description: 'Enter a valid Lightning address (e.g. you@walletofsatoshi.com)',
         variant: 'destructive',
       });
       return;

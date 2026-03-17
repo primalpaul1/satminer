@@ -32,13 +32,14 @@ export interface GamePlayersResult {
   isLoading: boolean;
 }
 
-export function useGamePlayers(lobby: GameLobbyData): GamePlayersResult {
+export function useGamePlayers(lobby: GameLobbyData | undefined): GamePlayersResult {
   const { nostr } = useNostr();
   const [paidPlayers, setPaidPlayers] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [totalPaid, setTotalPaid] = useState(0);
 
   const checkPayments = useCallback(async () => {
+    if (!lobby) return;
     try {
       const zapReceipts: NostrEvent[] = await nostr.query(
         [{
@@ -81,7 +82,7 @@ export function useGamePlayers(lobby: GameLobbyData): GamePlayersResult {
     } finally {
       setIsLoading(false);
     }
-  }, [nostr, lobby.event.kind, lobby.event.pubkey, lobby.gameId, lobby.betAmount]);
+  }, [nostr, lobby?.event.kind, lobby?.event.pubkey, lobby?.gameId, lobby?.betAmount]);
 
   useEffect(() => {
     checkPayments();
@@ -91,8 +92,12 @@ export function useGamePlayers(lobby: GameLobbyData): GamePlayersResult {
 
   // Build the unified player list:
   // Start with the host, then add anyone who paid (deduplicated, stable order)
+  if (!lobby) {
+    return { players: [], paidPlayers, allPaid: false, paidCount: 0, totalPaid, isLoading };
+  }
+
   const players: string[] = [lobby.hostPubkey];
-  
+
   // Add lobby p-tag players that aren't already in the list
   const lobbyPTags = lobby.event.tags
     .filter(([name]) => name === 'p')
