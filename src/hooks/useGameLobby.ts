@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useNostr } from '@nostrify/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNostrPublish } from './useNostrPublish';
@@ -207,7 +208,7 @@ export function useGameActions(gameId: string) {
 export function usePublishState() {
   const { mutateAsync: createEvent } = useNostrPublish();
 
-  const publishState = async (gameId: string, patch: import('@/lib/gameEngine').PlayerStatePatch) => {
+  const publishState = useCallback(async (gameId: string, patch: import('@/lib/gameEngine').PlayerStatePatch) => {
     await createEvent({
       kind: GAME_KINDS.ACTION,
       content: JSON.stringify(patch),
@@ -218,7 +219,7 @@ export function usePublishState() {
       ],
       created_at: Math.floor(Date.now() / 1000),
     });
-  };
+  }, [createEvent]);
 
   return { publishState };
 }
