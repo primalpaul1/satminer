@@ -19,6 +19,11 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				sans: ['Inter Variable', 'Inter', 'system-ui', 'sans-serif'],
+				mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+				pixel: ['"Press Start 2P"', 'monospace'],
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
