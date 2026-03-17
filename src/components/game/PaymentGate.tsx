@@ -228,9 +228,10 @@ export function PaymentGate({ lobby, selectedCharacter, onSelectCharacter, onPay
           await sendPayment(nwcConnection, inv);
           toast({
             title: 'Payment sent!',
-            description: `${amount} sats paid via NWC. Confirming...`,
+            description: `${amount} sats paid via NWC.`,
           });
           setIsPaying(false);
+          setIsPaid(true);
           return;
         } catch (nwcError) {
           console.error('NWC auto-pay failed:', nwcError);
@@ -249,9 +250,10 @@ export function PaymentGate({ lobby, selectedCharacter, onSelectCharacter, onPay
           await provider.sendPayment(inv);
           toast({
             title: 'Payment sent!',
-            description: `${amount} sats paid via WebLN. Confirming...`,
+            description: `${amount} sats paid via WebLN.`,
           });
           setIsPaying(false);
+          setIsPaid(true);
           return;
         } catch (weblnError) {
           console.error('WebLN auto-pay failed:', weblnError);
