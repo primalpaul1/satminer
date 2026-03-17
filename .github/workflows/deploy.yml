@@ -38,6 +38,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies and build
+        env:
+          VITE_HOUSE_NSEC: ${{ secrets.VITE_HOUSE_NSEC }}
+          VITE_HOUSE_NWC: ${{ secrets.VITE_HOUSE_NWC }}
         run: |
           npm install
           npm run build
