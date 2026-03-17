@@ -106,7 +106,8 @@ export function WaitingRoom({ lobby, onGameStart }: WaitingRoomProps) {
   }, [lobby.status, onGameStart]);
 
   const handleCopyLink = () => {
-    const url = `${window.location.origin}/game/${lobby.hostPubkey}/${lobby.gameId}`;
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+    const url = `${window.location.origin}${base}/game/${lobby.hostPubkey}/${lobby.gameId}`;
     navigator.clipboard.writeText(url).then(() => {
       toast({
         title: 'Link copied!',
