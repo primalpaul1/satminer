@@ -26,6 +26,14 @@ interface GamePlayProps {
   lobby: GameLobbyData;
 }
 
+// How often we attempt to publish a player's action (ms).
+// Lowered to 150ms — fast enough for responsiveness but gentle on relay rate limits.
+const ACTION_THROTTLE = 150;
+
+// How many of my own recent action event-IDs to keep in the dedup set.
+// Older ones are pruned to avoid unbounded memory growth.
+const MAX_PROCESSED_IDS = 500;
+
 export function GamePlay({ lobby }: GamePlayProps) {
   const { user } = useCurrentUser();
   const { publishAction } = usePublishAction();
@@ -68,29 +76,61 @@ export function GamePlay({ lobby }: GamePlayProps) {
   const lastActionTimeRef = useRef(0);
   const processedActionsRef = useRef(new Set<string>());
 
-  // Throttle for actions (prevent spam)
-  const ACTION_THROTTLE = 100; // ms
+  // Track the timestamp of the newest action we've seen so far.
+  // Polling uses this as a `since` filter so we only fetch genuinely new events,
+  // avoiding re-scanning the full history on every tick.
+  const lastSeenTimestampRef = useRef(Math.floor(Date.now() / 1000));
+
+  // Whether a relay query is currently in-flight.
+  // Prevents overlapping polls when the relay is slow.
+  const isPollingRef = useRef(false);
 
   // Poll for remote player actions
   useEffect(() => {
     if (!user || gameState.winner) return;
 
-    const interval = setInterval(async () => {
+    const poll = async () => {
+      // Skip if a previous query hasn't finished yet (prevents thundering herd)
+      if (isPollingRef.current) return;
+      isPollingRef.current = true;
+
       try {
+        const since = lastSeenTimestampRef.current;
+
         const events = await nostr.query(
           [{
             kinds: [GAME_KINDS.ACTION],
             '#d': [lobby.gameId],
-            limit: 50,
+            // Only fetch events newer than what we've already processed.
+            // Use a 5-second lookback buffer to handle minor clock skew between relays.
+            since: Math.max(0, since - 5),
+            limit: 100,
           }],
-          { signal: AbortSignal.timeout(3000) },
+          { signal: AbortSignal.timeout(4000) },
         );
+
+        // Advance the watermark to the newest event we received
+        if (events.length > 0) {
+          const newestTs = Math.max(...events.map((e: NostrEvent) => e.created_at));
+          if (newestTs > lastSeenTimestampRef.current) {
+            lastSeenTimestampRef.current = newestTs;
+          }
+        }
 
         // Process new actions from OTHER players
         events.forEach((event: NostrEvent) => {
           if (event.pubkey === user.pubkey) return;
           if (processedActionsRef.current.has(event.id)) return;
           processedActionsRef.current.add(event.id);
+
+          // Prune the dedup set to avoid unbounded memory growth
+          if (processedActionsRef.current.size > MAX_PROCESSED_IDS) {
+            const iter = processedActionsRef.current.values();
+            for (let i = 0; i < 100; i++) {
+              const val = iter.next().value;
+              if (val !== undefined) processedActionsRef.current.delete(val);
+            }
+          }
 
           try {
             const action = JSON.parse(event.content);
@@ -109,7 +149,7 @@ export function GamePlay({ lobby }: GamePlayProps) {
 
               if (action.type === 'move' && action.direction) {
                 state = movePlayer(state, event.pubkey, action.direction);
-                // Only apply gravity for horizontal moves, not intentional up/down moves
+                // Only apply gravity for horizontal moves (same logic as local player)
                 if (action.direction === 'left' || action.direction === 'right') {
                   state = applyGravity(state, event.pubkey);
                 }
@@ -130,12 +170,20 @@ export function GamePlay({ lobby }: GamePlayProps) {
           }
         });
       } catch {
-        // Query failed, try again later
+        // Query failed (timeout, network error etc.) — just try again next tick
+      } finally {
+        isPollingRef.current = false;
       }
-    }, 800);
+    };
+
+    // Poll every 800ms, but the guard above ensures we never have two in-flight at once
+    const interval = setInterval(poll, 800);
+    // Kick off an immediate first poll so we don't wait 800ms on entry
+    poll();
 
     return () => clearInterval(interval);
-  }, [nostr, lobby.gameId, user, gameState.winner, lobby.players]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nostr, lobby.gameId, user, lobby.players, gameState.winner]);
 
   // Update swing animation
   useEffect(() => {
@@ -175,7 +223,7 @@ export function GamePlay({ lobby }: GamePlayProps) {
   }, [gameState.winner, user?.pubkey, lobby, claimWin, updateStatus, payWinner]);
 
   const handleMove = useCallback((direction: 'up' | 'down' | 'left' | 'right') => {
-    if (!user || gameState.winner) return;
+    if (!user || gameStateRef.current.winner) return;
 
     const now = Date.now();
     if (now - lastActionTimeRef.current < ACTION_THROTTLE) return;
@@ -191,11 +239,17 @@ export function GamePlay({ lobby }: GamePlayProps) {
       return state;
     });
 
-    publishAction(lobby.gameId, { type: 'move', direction }).catch(console.error);
-  }, [user, gameState.winner, lobby.gameId, publishAction]);
+    // Publish with retry — a single relay timeout shouldn't drop the move
+    publishAction(lobby.gameId, { type: 'move', direction }).catch(() => {
+      // Retry once after a short delay
+      setTimeout(() => {
+        publishAction(lobby.gameId, { type: 'move', direction }).catch(console.error);
+      }, 500);
+    });
+  }, [user, lobby.gameId, publishAction]);
 
   const handleSwing = useCallback(() => {
-    if (!user || gameState.winner) return;
+    if (!user || gameStateRef.current.winner) return;
 
     const now = Date.now();
     if (now - lastActionTimeRef.current < ACTION_THROTTLE) return;
@@ -209,8 +263,13 @@ export function GamePlay({ lobby }: GamePlayProps) {
       return result.state;
     });
 
-    publishAction(lobby.gameId, { type: 'swing' }).catch(console.error);
-  }, [user, gameState.winner, lobby.gameId, publishAction]);
+    // Publish with retry
+    publishAction(lobby.gameId, { type: 'swing' }).catch(() => {
+      setTimeout(() => {
+        publishAction(lobby.gameId, { type: 'swing' }).catch(console.error);
+      }, 500);
+    });
+  }, [user, lobby.gameId, publishAction]);
 
   // Keyboard controls
   useEffect(() => {

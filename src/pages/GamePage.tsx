@@ -22,7 +22,7 @@ export default function GamePage() {
     description: 'Mine for Bitcoin and win sats!',
   });
 
-  const { data: lobby, isLoading, error } = useGameLobby(gameId ?? '', hostPubkey ?? '');
+  const { data: lobby, isLoading, error } = useGameLobby(gameId ?? '', hostPubkey ?? '', gameStarted);
 
   const handleGameStart = useCallback(() => {
     setGameStarted(true);
@@ -85,6 +85,9 @@ export default function GamePage() {
   }
 
   const isPlaying = gameStarted || lobby.status === 'playing';
+
+  // Stop polling the lobby once we're in gameplay — ACTION events are what matter now
+  // (The hook's refetchInterval is already disabled when gameStarted=true)
 
   // If the game is already playing, go straight to gameplay
   if (isPlaying) {

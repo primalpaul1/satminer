@@ -62,7 +62,7 @@ export function useGameLobbies() {
   });
 }
 
-export function useGameLobby(gameId: string, hostPubkey: string) {
+export function useGameLobby(gameId: string, hostPubkey: string, isPlaying = false) {
   const { nostr } = useNostr();
 
   return useQuery({
@@ -81,7 +81,9 @@ export function useGameLobby(gameId: string, hostPubkey: string) {
       if (events.length === 0) return null;
       return parseGameLobby(events[0]);
     },
-    refetchInterval: 3000,
+    // Stop polling once gameplay starts — the lobby event doesn't change mid-game
+    // and polling wastes relay connections that are needed for ACTION events.
+    refetchInterval: isPlaying ? false : 3000,
     enabled: !!gameId && !!hostPubkey,
   });
 }
