@@ -111,6 +111,7 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
   const winClaimedRef = useRef(false);
   const payoutFiredRef = useRef(false);
   const lastBroadcastTimeRef = useRef(0);
+  const pressedKeysRef = useRef(new Set<string>());
   const processedIdsRef = useRef(new Set<string>());
 
   // Watermark: only fetch events newer than what we've already seen
@@ -329,34 +330,29 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
   const handleMove = useCallback((direction: 'up' | 'down' | 'left' | 'right') => {
     if (!user || gameStateRef.current.winner) return;
 
-    const now = Date.now();
-    if (now - lastBroadcastTimeRef.current < BROADCAST_THROTTLE) return;
-    lastBroadcastTimeRef.current = now;
-
-    let newState: GameState;
+    // Always update local state immediately for responsive feel
     setGameState(prev => {
       let state = movePlayer(prev, user.pubkey, direction);
       if (direction === 'left' || direction === 'right') {
         state = applyGravity(state, user.pubkey);
       }
-      newState = state;
       return state;
     });
 
-    // Broadcast after the next microtask so newState is assigned
-    setTimeout(() => broadcastState(newState ?? gameStateRef.current, false), 0);
+    // Only throttle the network broadcast, not local state
+    const now = Date.now();
+    if (now - lastBroadcastTimeRef.current >= BROADCAST_THROTTLE) {
+      lastBroadcastTimeRef.current = now;
+      setTimeout(() => broadcastState(gameStateRef.current, false), 0);
+    }
   }, [user, broadcastState]);
 
   const handleSwing = useCallback(() => {
     if (!user || gameStateRef.current.winner) return;
 
-    const now = Date.now();
-    if (now - lastBroadcastTimeRef.current < BROADCAST_THROTTLE) return;
-    lastBroadcastTimeRef.current = now;
-
     let foundBitcoin = false;
-    let newState: GameState;
 
+    // Always update local state immediately
     setGameState(prev => {
       const result = swingAxe(prev, user.pubkey);
       if (result.hitCell) {
@@ -364,32 +360,77 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
         playMineSound(result.destroyed);
       }
       foundBitcoin = result.foundBitcoin;
-      newState = result.state;
       return result.state;
     });
 
-    setTimeout(() => broadcastState(newState ?? gameStateRef.current, foundBitcoin), 0);
+    // Only throttle the network broadcast
+    const now = Date.now();
+    if (now - lastBroadcastTimeRef.current >= BROADCAST_THROTTLE) {
+      lastBroadcastTimeRef.current = now;
+      setTimeout(() => broadcastState(gameStateRef.current, foundBitcoin), 0);
+    }
   }, [user, broadcastState]);
 
   // --- Keyboard controls ---
+  // Track pressed keys via keydown/keyup and process them on a tick interval
+  // so that held keys produce continuous movement.
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return;
-      switch (e.key) {
-        case 'ArrowUp': case 'w': case 'W':
-          e.preventDefault(); handleMove('up'); break;
-        case 'ArrowDown': case 's': case 'S':
-          e.preventDefault(); handleMove('down'); break;
-        case 'ArrowLeft': case 'a': case 'A':
-          e.preventDefault(); handleMove('left'); break;
-        case 'ArrowRight': case 'd': case 'D':
-          e.preventDefault(); handleMove('right'); break;
-        case ' ':
-          e.preventDefault(); handleSwing(); break;
+    const keyToDirection = (key: string): 'up' | 'down' | 'left' | 'right' | 'swing' | null => {
+      switch (key) {
+        case 'ArrowUp': case 'w': case 'W': return 'up';
+        case 'ArrowDown': case 's': case 'S': return 'down';
+        case 'ArrowLeft': case 'a': case 'A': return 'left';
+        case 'ArrowRight': case 'd': case 'D': return 'right';
+        case ' ': return 'swing';
+        default: return null;
       }
     };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const dir = keyToDirection(e.key);
+      if (dir) {
+        e.preventDefault();
+        pressedKeysRef.current.add(dir);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const dir = keyToDirection(e.key);
+      if (dir) {
+        pressedKeysRef.current.delete(dir);
+      }
+    };
+
+    const handleBlur = () => {
+      pressedKeysRef.current.clear();
+    };
+
+    // Input tick: read pressed keys every 80ms (~12 moves/sec)
+    const tick = setInterval(() => {
+      const keys = pressedKeysRef.current;
+      if (keys.size === 0) return;
+
+      // Priority: up > down > left > right (one direction per tick)
+      if (keys.has('up')) handleMove('up');
+      else if (keys.has('down')) handleMove('down');
+      else if (keys.has('left')) handleMove('left');
+      else if (keys.has('right')) handleMove('right');
+
+      // Swing is independent — can fire alongside movement
+      if (keys.has('swing')) handleSwing();
+    }, 80);
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      clearInterval(tick);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+      pressedKeysRef.current.clear();
+    };
   }, [handleMove, handleSwing]);
 
   const totalPot = lobby.betAmount * allPlayers.length;
