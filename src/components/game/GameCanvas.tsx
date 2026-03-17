@@ -183,15 +183,25 @@ function drawBitcoinSymbol(ctx: CanvasRenderingContext2D, cx: number, cy: number
 
 // Pre-loaded character avatar images
 const characterImages: Record<string, HTMLImageElement> = {};
-let imagesLoaded = false;
+let preloadStarted = false;
 
 function preloadCharacterImages() {
-  if (imagesLoaded) return;
-  imagesLoaded = true;
+  if (preloadStarted) return;
+  preloadStarted = true;
   for (const char of CHARACTERS) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = char.image;
+    // Retry once on failure
+    img.onerror = () => {
+      console.warn(`[GameCanvas] Failed to load avatar for ${char.id}, retrying...`);
+      setTimeout(() => {
+        const retry = new Image();
+        retry.crossOrigin = 'anonymous';
+        retry.src = char.image;
+        characterImages[char.id] = retry;
+      }, 1000);
+    };
     characterImages[char.id] = img;
   }
 }

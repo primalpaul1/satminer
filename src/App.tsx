@@ -14,6 +14,15 @@ import { AppProvider } from '@/components/AppProvider';
 import { NWCProvider } from '@/contexts/NWCContext';
 import { AppConfig } from '@/contexts/AppContext';
 import AppRouter from './AppRouter';
+import { CHARACTERS } from '@/lib/gameConstants';
+
+// Preload character avatars immediately at app startup so they're cached
+// by the time the user enters a game.
+CHARACTERS.forEach(char => {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = char.image;
+});
 
 const head = createHead({
   plugins: [
