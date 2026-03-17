@@ -73,6 +73,7 @@ export function GamePlay({ lobby }: GamePlayProps) {
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
   const winClaimedRef = useRef(false);
+  const payoutFiredRef = useRef(false); // prevent double-payout across winner + host
   const lastActionTimeRef = useRef(0);
   const processedActionsRef = useRef(new Set<string>());
 
@@ -211,16 +212,54 @@ export function GamePlay({ lobby }: GamePlayProps) {
     return () => clearInterval(interval);
   }, []);
 
-  // Claim win when bitcoin is found — also trigger house payout
+  // Claim win when bitcoin is found — also trigger house payout from winner's browser
   useEffect(() => {
     if (gameState.winner && gameState.winner === user?.pubkey && !winClaimedRef.current) {
       winClaimedRef.current = true;
+      payoutFiredRef.current = true;
       claimWin(lobby.gameId, lobby.hostPubkey).catch(console.error);
       updateStatus(lobby, 'finished').catch(console.error);
-      // Trigger house payout to the winner
       payWinner(user.pubkey, lobby).catch(console.error);
     }
   }, [gameState.winner, user?.pubkey, lobby, claimWin, updateStatus, payWinner]);
+
+  // Host-side payout fallback: watch for a RESULT event from the winner.
+  // If the winner's browser crashed or disconnected before payWinner() ran,
+  // the host picks it up here and pays on their behalf.
+  const isHost = user?.pubkey === lobby.hostPubkey;
+  useEffect(() => {
+    if (!isHost || gameState.winner) return; // only run while game is still active
+
+    const interval = setInterval(async () => {
+      try {
+        const results = await nostr.query(
+          [{
+            kinds: [GAME_KINDS.RESULT],
+            '#d': [lobby.gameId],
+            limit: 5,
+          }],
+          { signal: AbortSignal.timeout(4000) },
+        );
+
+        for (const event of results) {
+          // A RESULT event means this player claims to have won
+          const winnerPubkey = event.pubkey;
+          if (winnerPubkey && !payoutFiredRef.current) {
+            payoutFiredRef.current = true;
+            // Update local state so the overlay shows
+            setGameState(prev => ({ ...prev, winner: winnerPubkey }));
+            updateStatus(lobby, 'finished').catch(console.error);
+            // Pay the winner
+            payWinner(winnerPubkey, lobby).catch(console.error);
+          }
+        }
+      } catch {
+        // Query failed, try again next tick
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [isHost, gameState.winner, nostr, lobby, updateStatus, payWinner]);
 
   const handleMove = useCallback((direction: 'up' | 'down' | 'left' | 'right') => {
     if (!user || gameStateRef.current.winner) return;
