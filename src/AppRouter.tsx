@@ -7,9 +7,11 @@ import GamePage from "./pages/GamePage";
 import { NIP19Page } from "./pages/NIP19Page";
 import NotFound from "./pages/NotFound";
 
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/';
+
 export function AppRouter() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <ScrollToTop />
       <Routes>
         <Route path="/" element={<Index />} />

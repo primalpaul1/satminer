@@ -10,7 +10,7 @@ export const CHARACTERS: CharacterDef[] = [
   { id: 'dorsey', label: 'Jack Dorsey', image: 'https://blossom.primal.net/3a097fc231b288a6a808069aca47478c8fde0f8b0fe392cfe5e7c190cb4126ad.png' },
   { id: 'mow', label: 'Samson Mow', image: 'https://blossom.primal.net/2935eaf91220854c6fef928f88fe749dba5a5ae6574ac6c322817a885162f120.png' },
   { id: 'saifedean', label: 'Saifedean Ammous', image: 'https://blossom.primal.net/86f879c50e217870621bb65b5b92a5262f206c225cce9753c27e8a7d3a60d837.png' },
-  { id: 'odell', label: 'Odell', image: '/odell.png' },
+  { id: 'odell', label: 'Odell', image: `${import.meta.env.BASE_URL}odell.png` },
 ];
 
 /** Nostr event kinds for the SatMiner game */
