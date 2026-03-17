@@ -23,10 +23,12 @@ import { useGamePlayers } from '@/hooks/useGamePlayers';
 import type { GameLobbyData } from '@/hooks/useGameLobby';
 import { useNostr } from '@nostrify/react';
 import { GAME_KINDS, STATE_BROADCAST_INTERVAL, SWING_ANIMATION_FRAMES } from '@/lib/gameConstants';
-import { Trophy, Zap, ArrowLeft, Loader2 } from 'lucide-react';
+import { Zap, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import type { NostrEvent } from '@nostrify/nostrify';
+import { GameOverOverlay } from './GameOverOverlay';
+import { playMineSound } from '@/lib/sounds';
 
 interface GamePlayProps {
   lobby: GameLobbyData;
@@ -359,6 +361,7 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
       const result = swingAxe(prev, user.pubkey);
       if (result.hitCell) {
         addMiningParticles(result.hitCell.x, result.hitCell.y, result.destroyed, result.foundBitcoin);
+        playMineSound(result.destroyed);
       }
       foundBitcoin = result.foundBitcoin;
       newState = result.state;
@@ -424,59 +427,16 @@ export function GamePlay({ lobby, characterId }: GamePlayProps) {
         <div className="relative rounded-xl overflow-hidden border-2 border-stone-700/50 shadow-2xl shadow-black/50">
           <GameCanvas gameState={gameState} currentPubkey={user?.pubkey} />
 
-          {/* Winner overlay */}
+          {/* Winner/Loser overlay */}
           {gameState.winner && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-              <div className="text-center space-y-4 animate-in fade-in zoom-in duration-500">
-                {isWinner ? (
-                  <>
-                    <div className="relative">
-                      <Trophy className="w-16 h-16 text-amber-400 mx-auto animate-bounce" />
-                      <div className="absolute inset-0 w-16 h-16 mx-auto bg-amber-400/20 rounded-full blur-xl" />
-                    </div>
-                    <h2 className="text-2xl font-bold text-amber-400 font-mono">
-                      YOU FOUND THE BITCOIN!
-                    </h2>
-                    <p className="text-lg text-amber-300/80 font-mono">
-                      You won <span className="text-amber-400 font-bold">{totalPot} sats!</span>
-                    </p>
-                    {isPayingOut ? (
-                      <div className="flex items-center justify-center gap-2 text-amber-300/60">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span className="text-xs font-mono">Sending payout to your wallet...</span>
-                      </div>
-                    ) : payoutComplete ? (
-                      <p className="text-xs text-emerald-400 font-mono">
-                        ⚡ Payout submitted to your Lightning address!
-                      </p>
-                    ) : null}
-                  </>
-                ) : isLoser ? (
-                  <>
-                    <div className="text-4xl">💀</div>
-                    <h2 className="text-xl font-bold text-stone-300 font-mono">
-                      BITCOIN WAS FOUND
-                    </h2>
-                    <p className="text-sm text-stone-400 font-mono">
-                      Better luck next time, miner.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <Trophy className="w-12 h-12 text-amber-400 mx-auto" />
-                    <h2 className="text-xl font-bold text-stone-300 font-mono">
-                      GAME OVER
-                    </h2>
-                  </>
-                )}
-                <Button
-                  onClick={() => navigate('/')}
-                  className="bg-amber-600 hover:bg-amber-500 text-black font-mono font-bold mt-4"
-                >
-                  Back to Lobby
-                </Button>
-              </div>
-            </div>
+            <GameOverOverlay
+              isWinner={isWinner}
+              isLoser={isLoser}
+              totalPot={totalPot}
+              isPayingOut={isPayingOut}
+              payoutComplete={payoutComplete}
+              onBack={() => navigate('/')}
+            />
           )}
         </div>
 
