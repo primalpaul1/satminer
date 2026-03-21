@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 const isGitHubPages = process.env.GITHUB_ACTIONS === 'true';
 
 export default defineConfig(() => ({
-  base: isGitHubPages ? '/minedeep/' : '/',
+  base: isGitHubPages ? '/satminer/' : '/',
   server: {
     host: "::",
     port: 8080,
