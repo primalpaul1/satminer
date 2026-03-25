@@ -100,11 +100,23 @@ function parseNWC(uri: string): NWCParams {
 }
 
 /**
+ * Connect to a WebSocket using the Cloudflare Workers fetch-upgrade pattern.
+ * CF Workers don't support `new WebSocket(url)` for outbound connections.
+ */
+async function connectWS(url: string): Promise<WebSocket> {
+  const resp = await fetch(url, { headers: { Upgrade: 'websocket' } });
+  const ws = (resp as unknown as { webSocket: WebSocket | null }).webSocket;
+  if (!ws) throw new Error(`Failed to establish WebSocket to ${url}`);
+  ws.accept();
+  return ws;
+}
+
+/**
  * Pay a Lightning invoice via NWC (NIP-47).
  * Opens a WebSocket to the NWC relay, sends a pay_invoice request, and waits for the result.
  */
 async function payViaNWC(nwcUri: string, invoice: string): Promise<string> {
-  const { walletPubkey, relayUrl, secretKey, ourPubkey } = parseNWC(nwcUri);
+  const { walletPubkey, relayUrl, secretKey } = parseNWC(nwcUri);
 
   // Build NIP-47 request content
   const plaintext = JSON.stringify({ method: 'pay_invoice', params: { invoice } });
@@ -120,23 +132,13 @@ async function payViaNWC(nwcUri: string, invoice: string): Promise<string> {
     secretKey,
   );
 
+  const ws = await connectWS(relayUrl);
+
   return new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
       try { ws.close(); } catch { /* ignore */ }
       reject(new Error('NWC payment timed out after 60 seconds'));
     }, 60_000);
-
-    const ws = new WebSocket(relayUrl);
-
-    ws.addEventListener('open', () => {
-      // Subscribe for the wallet's response
-      ws.send(JSON.stringify([
-        'REQ', 'nwc-res',
-        { kinds: [23195], authors: [walletPubkey], '#e': [requestEvent.id] },
-      ]));
-      // Send the payment request
-      ws.send(JSON.stringify(['EVENT', requestEvent]));
-    });
 
     ws.addEventListener('message', async (evt) => {
       try {
@@ -162,13 +164,15 @@ async function payViaNWC(nwcUri: string, invoice: string): Promise<string> {
 
     ws.addEventListener('error', () => {
       clearTimeout(timeout);
-      reject(new Error(`WebSocket connection to NWC relay failed: ${relayUrl}`));
+      reject(new Error(`WebSocket error on NWC relay: ${relayUrl}`));
     });
 
-    ws.addEventListener('close', () => {
-      clearTimeout(timeout);
-      // If we haven't resolved/rejected yet, it's an error
-    });
+    // Send immediately — connection is already established after accept()
+    ws.send(JSON.stringify([
+      'REQ', 'nwc-res',
+      { kinds: [23195], authors: [walletPubkey], '#e': [requestEvent.id] },
+    ]));
+    ws.send(JSON.stringify(['EVENT', requestEvent]));
   });
 }
 
@@ -178,18 +182,19 @@ async function payViaNWC(nwcUri: string, invoice: string): Promise<string> {
 
 /** Query a single relay and return matching events (with EOSE-based completion). */
 async function queryRelay(relayUrl: string, filter: Record<string, unknown>, timeoutMs = 8000): Promise<NostrEvent[]> {
+  let ws: WebSocket;
+  try {
+    ws = await connectWS(relayUrl);
+  } catch {
+    return [];
+  }
+
   return new Promise<NostrEvent[]>((resolve) => {
     const events: NostrEvent[] = [];
     const timer = setTimeout(() => {
       try { ws.close(); } catch { /* ignore */ }
       resolve(events);
     }, timeoutMs);
-
-    const ws = new WebSocket(relayUrl);
-
-    ws.addEventListener('open', () => {
-      ws.send(JSON.stringify(['REQ', 'q', filter]));
-    });
 
     ws.addEventListener('message', (evt) => {
       try {
@@ -208,6 +213,9 @@ async function queryRelay(relayUrl: string, filter: Record<string, unknown>, tim
       clearTimeout(timer);
       resolve(events);
     });
+
+    // Send immediately — connection is already established
+    ws.send(JSON.stringify(['REQ', 'q', filter]));
   });
 }
 
@@ -225,30 +233,19 @@ async function queryRelays(relayUrls: string[], filter: Record<string, unknown>)
 /** Publish an event to all relays (best-effort, don't wait for all). */
 async function publishToRelays(relayUrls: string[], event: VerifiedEvent): Promise<void> {
   await Promise.allSettled(
-    relayUrls.map(
-      (url) =>
-        new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
+    relayUrls.map(async (url) => {
+      try {
+        const ws = await connectWS(url);
+        ws.send(JSON.stringify(['EVENT', event]));
+        // Give it a moment to send, then close
+        await new Promise<void>((resolve) => {
+          setTimeout(() => {
             try { ws.close(); } catch { /* ignore */ }
             resolve();
-          }, 5000);
-
-          const ws = new WebSocket(url);
-          ws.addEventListener('open', () => {
-            ws.send(JSON.stringify(['EVENT', event]));
-            // Don't wait for OK, just give it a moment
-            setTimeout(() => {
-              clearTimeout(timer);
-              try { ws.close(); } catch { /* ignore */ }
-              resolve();
-            }, 1000);
-          });
-          ws.addEventListener('error', () => {
-            clearTimeout(timer);
-            resolve();
-          });
-        }),
-    ),
+          }, 1000);
+        });
+      } catch { /* ignore */ }
+    }),
   );
 }
 
